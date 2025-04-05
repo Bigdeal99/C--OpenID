@@ -1,0 +1,15 @@
+@{
+    ViewData["Title"] = "Profile";
+    var user = ViewBag.UserInfo;
+}
+
+<h2>User Info</h2>
+
+@if (user != null)
+{
+    <pre>@user</pre>
+}
+else
+{
+    <p>No user info found.</p>
+}
