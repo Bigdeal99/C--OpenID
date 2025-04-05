@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("OidcClientApp")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+e871962d0ee859cb6d9ccaae6ccf22977cdde1fa")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+e552426b0f6c732976dfe52b7eec17098fa5fe8f")]
 [assembly: System.Reflection.AssemblyProductAttribute("OidcClientApp")]
 [assembly: System.Reflection.AssemblyTitleAttribute("OidcClientApp")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
