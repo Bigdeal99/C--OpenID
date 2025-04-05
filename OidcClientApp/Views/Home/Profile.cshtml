@@ -4,12 +4,20 @@
 }
 
 <h2>User Info</h2>
+<form method="post" action="/logout">
+    <button class="btn btn-danger">Logout</button>
+</form>
 
-@if (user != null)
+@if (user.ValueKind == System.Text.Json.JsonValueKind.Object)
 {
-    <pre>@user</pre>
+    <ul>
+        @foreach (var property in user.EnumerateObject())
+        {
+            <li><strong>@property.Name</strong>: @property.Value</li>
+        }
+    </ul>
 }
 else
 {
-    <p>No user info found.</p>
+    <p>No user info available.</p>
 }

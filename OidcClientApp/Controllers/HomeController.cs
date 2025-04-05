@@ -7,7 +7,6 @@ using System.Security.Cryptography;
 using System.IdentityModel.Tokens.Jwt;
 using Microsoft.AspNetCore.WebUtilities;
 
-
 namespace OidcClientApp.Controllers;
 
 public class HomeController : Controller
@@ -18,15 +17,20 @@ public class HomeController : Controller
     {
         _logger = logger;
     }
-private async Task<OidcConfig> GetOidcConfig()
-{
-    var client = new HttpClient();
-    return await client.GetFromJsonAsync<OidcConfig>("http://localhost:8080/realms/master/.well-known/openid-configuration");
-}
-private const string clientId = "dotnet-client";
-private const string clientSecret = "<TPREEXivXqxLBrnQ6czCQiEYkkhMBNXa>";
-private const string redirectUri = "https://localhost:5001/callback";
 
+    // === Constants ===
+    private const string clientId = "dotnet-client";
+    private const string clientSecret = "TPREEXivXqxLBrnQ6czCQiEYkkhMBNXa";
+    private const string redirectUri = "http://localhost:5226/callback";
+
+    // === Config Fetch ===
+    private async Task<OidcConfig> GetOidcConfig()
+    {
+        var client = new HttpClient();
+        return await client.GetFromJsonAsync<OidcConfig>("http://localhost:8080/realms/master/.well-known/openid-configuration");
+    }
+
+    // === Views ===
     public IActionResult Index()
     {
         return View();
@@ -42,86 +46,106 @@ private const string redirectUri = "https://localhost:5001/callback";
     {
         return View(new ErrorViewModel { RequestId = Activity.Current?.Id ?? HttpContext.TraceIdentifier });
     }
+
+    // === Login ===
     [HttpGet("/login")]
-public async Task<IActionResult> Login()
-{
-    var config = await GetOidcConfig();
-
-    // Generate PKCE code verifier and challenge
-    var codeVerifier = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
-    var codeChallenge = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(codeVerifier)))
-        .Replace("+", "-").Replace("/", "_").Replace("=", "");
-
-    var state = Guid.NewGuid().ToString();
-    HttpContext.Session.SetString("code_verifier", codeVerifier);
-    HttpContext.Session.SetString("state", state);
-
-    var parameters = new Dictionary<string, string?>
+    public async Task<IActionResult> Login()
     {
-        { "client_id", clientId },
-        { "scope", "openid email profile" },
-        { "response_type", "code" },
-        { "redirect_uri", redirectUri },
-        { "state", state },
-        { "code_challenge_method", "S256" },
-        { "code_challenge", codeChallenge },
-        { "prompt", "login" }
-    };
+        var config = await GetOidcConfig();
 
-    var authorizationUrl = QueryHelpers.AddQueryString(config.authorization_endpoint, parameters);
-    return Redirect(authorizationUrl);
-}
-[HttpGet("/callback")]
-public async Task<IActionResult> Callback(string code, string state)
+        // Generate PKCE verifier and challenge (URL-safe)
+        var codeVerifierBytes = RandomNumberGenerator.GetBytes(32);
+        var codeVerifier = Convert.ToBase64String(codeVerifierBytes)
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+        var codeChallengeBytes = SHA256.HashData(Encoding.UTF8.GetBytes(codeVerifier));
+        var codeChallenge = Convert.ToBase64String(codeChallengeBytes)
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+        var state = Guid.NewGuid().ToString();
+
+        HttpContext.Session.SetString("code_verifier", codeVerifier);
+        HttpContext.Session.SetString("state", state);
+
+        _logger.LogInformation("Redirecting to Keycloak with state: {State}", state);
+
+        var parameters = new Dictionary<string, string?>
+        {
+            { "client_id", clientId },
+            { "scope", "openid email profile" },
+            { "response_type", "code" },
+            { "redirect_uri", redirectUri },
+            { "state", state },
+            { "code_challenge_method", "S256" },
+            { "code_challenge", codeChallenge },
+            { "prompt", "login" }
+        };
+
+        var authorizationUrl = QueryHelpers.AddQueryString(config.authorization_endpoint, parameters);
+        return Redirect(authorizationUrl);
+    }
+[HttpPost("/logout")]
+public IActionResult Logout()
 {
-    var storedState = HttpContext.Session.GetString("state");
-    var codeVerifier = HttpContext.Session.GetString("code_verifier");
+    HttpContext.Session.Clear();
+    return RedirectToAction("Index");
+}
 
-    if (state != storedState || string.IsNullOrEmpty(codeVerifier))
-        return BadRequest("Invalid state or missing verifier.");
-
-    var config = await GetOidcConfig();
-
-    var parameters = new Dictionary<string, string?>
+    // === Callback ===
+    [HttpGet("/callback")]
+    public async Task<IActionResult> Callback(string code, string state)
     {
-        { "grant_type", "authorization_code" },
-        { "code", code },
-        { "redirect_uri", redirectUri },
-        { "client_id", clientId },
-        { "client_secret", clientSecret },
-        { "code_verifier", codeVerifier }
-    };
+        var storedState = HttpContext.Session.GetString("state");
+        var codeVerifier = HttpContext.Session.GetString("code_verifier");
 
-    var http = new HttpClient();
-    var response = await http.PostAsync(config.token_endpoint, new FormUrlEncodedContent(parameters));
+        if (state != storedState || string.IsNullOrEmpty(codeVerifier))
+            return BadRequest("Invalid state or missing code verifier.");
 
-    if (!response.IsSuccessStatusCode)
-        return BadRequest("Failed to exchange code for tokens");
+        var config = await GetOidcConfig();
 
-    var tokenResponse = await response.Content.ReadFromJsonAsync<TokenResponse>();
+        var parameters = new Dictionary<string, string?>
+        {
+            { "grant_type", "authorization_code" },
+            { "code", code },
+            { "redirect_uri", redirectUri },
+            { "client_id", clientId },
+            { "client_secret", clientSecret },
+            { "code_verifier", codeVerifier }
+        };
 
-    // Store access token in session
-    HttpContext.Session.SetString("access_token", tokenResponse.access_token);
+        var http = new HttpClient();
+        var response = await http.PostAsync(config.token_endpoint, new FormUrlEncodedContent(parameters));
+        var responseBody = await response.Content.ReadAsStringAsync();
 
-    return RedirectToAction("Profile");
-}
-[HttpGet("/profile")]
-public async Task<IActionResult> Profile()
-{
-    var accessToken = HttpContext.Session.GetString("access_token");
-    if (string.IsNullOrEmpty(accessToken))
-        return Redirect("/");
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogError("Token exchange failed: {Error}", responseBody);
+            return BadRequest("Failed to exchange code for tokens. Error: " + responseBody);
+        }
 
-    var config = await GetOidcConfig();
+        var tokenResponse = JsonSerializer.Deserialize<TokenResponse>(responseBody);
+        HttpContext.Session.SetString("access_token", tokenResponse.access_token);
 
-    var http = new HttpClient();
-    http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+        return RedirectToAction("Profile");
+    }
 
-    var response = await http.GetAsync(config.userinfo_endpoint);
-    var userInfo = await response.Content.ReadAsStringAsync();
+    // === Profile ===
+    [HttpGet("/profile")]
+    public async Task<IActionResult> Profile()
+    {
+        var accessToken = HttpContext.Session.GetString("access_token");
+        if (string.IsNullOrEmpty(accessToken))
+            return Redirect("/");
 
-    ViewBag.UserInfo = JsonDocument.Parse(userInfo).RootElement;
-    return View();
-}
+        var config = await GetOidcConfig();
 
+        var http = new HttpClient();
+        http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+
+        var response = await http.GetAsync(config.userinfo_endpoint);
+        var userInfo = await response.Content.ReadAsStringAsync();
+
+        ViewBag.UserInfo = JsonDocument.Parse(userInfo).RootElement;
+        return View();
+    }
 }
